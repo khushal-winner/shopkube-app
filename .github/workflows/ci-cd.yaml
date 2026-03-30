@@ -1,58 +1,55 @@
 name: ShopKube CI/CD Pipeline
 
-# Kab run karo
 on:
   push:
     branches:
-      - main    # Sirf main branch pe push hone pe
+      - master   # 🔥 master branch trigger
 
 jobs:
 
-  # ─── JOB 1: Test ─────────────────────────────────────
+  # ─── JOB 1: TEST ─────────────────────────────
   test:
     name: Run Tests
     runs-on: ubuntu-latest
+
     steps:
-      - name: Code checkout karo
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Basic tests run karo
+      - name: Run basic tests
         run: |
           echo "Running tests..."
-          # Real project mein: npm test, pytest, etc.
           ls src/
-          echo "Tests passed! ✅"
+          echo "Tests passed!"
 
-  # ─── JOB 2: Build + Push Image ───────────────────────
+  # ─── JOB 2: BUILD + PUSH ─────────────────────
   build:
     name: Build Docker Image
     runs-on: ubuntu-latest
-    needs: test    # Test pass hone ke baad hi chalega
-    if: github.ref == 'refs/heads/main'
+    needs: test
+    if: github.ref == 'refs/heads/master'   # 🔥 master condition
 
     outputs:
       image-tag: ${{ steps.tag.outputs.tag }}
 
     steps:
-      - name: Code checkout karo
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Image tag banao (commit SHA use karo)
+      - name: Generate image tag
         id: tag
         run: |
-          # Short SHA = reproducible tag
           SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
           IMAGE_TAG="sha-${SHORT_SHA}"
           echo "tag=${IMAGE_TAG}" >> $GITHUB_OUTPUT
-          echo "Image tag: ${IMAGE_TAG}"
 
-      - name: Docker Hub login karo
+      - name: DockerHub login
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Docker image build + push karo
+      - name: Build & push image
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -61,38 +58,36 @@ jobs:
             ${{ secrets.DOCKERHUB_USERNAME }}/shopkube:${{ steps.tag.outputs.tag }}
             ${{ secrets.DOCKERHUB_USERNAME }}/shopkube:latest
 
-  # ─── JOB 3: Manifests Update ─────────────────────────
+  # ─── JOB 3: UPDATE MANIFESTS ─────────────────
   update-manifests:
     name: Update K8s Manifests
     runs-on: ubuntu-latest
     needs: build
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/master'   # 🔥 master condition
 
     steps:
-      - name: Manifests repo checkout karo
+      - name: Checkout manifests repo
         uses: actions/checkout@v4
         with:
           repository: ${{ github.repository_owner }}/shopkube-manifests
-          token: ${{ secrets.MANIFESTS_TOKEN }}    # PAT token
+          token: ${{ secrets.MANIFESTS_TOKEN }}
           path: shopkube-manifests
 
-      - name: Image tag update karo deployment mein
+      - name: Update image tag
         run: |
           cd shopkube-manifests
           IMAGE_TAG="${{ needs.build.outputs.image-tag }}"
-          DOCKERHUB_USER="${{ secrets.DOCKERHUB_USERNAME }}"
+          USER="${{ secrets.DOCKERHUB_USERNAME }}"
 
-          echo "New image: ${DOCKERHUB_USER}/shopkube:${IMAGE_TAG}"
+          echo "New image: $USER/shopkube:$IMAGE_TAG"
 
-          # deployment.yaml mein image tag replace karo
           sed -i \
-            "s|image: ${DOCKERHUB_USER}/shopkube:.*|image: ${DOCKERHUB_USER}/shopkube:${IMAGE_TAG}|" \
+            "s|image: $USER/shopkube:.*|image: $USER/shopkube:$IMAGE_TAG|" \
             apps/shopkube/02-deployment.yaml
 
-          # Change verify karo
           grep "image:" apps/shopkube/02-deployment.yaml
 
-      - name: Commit + Push karo
+      - name: Commit & push
         run: |
           cd shopkube-manifests
           git config user.name "GitHub Actions Bot"
@@ -100,12 +95,8 @@ jobs:
 
           git add apps/shopkube/02-deployment.yaml
 
-          git commit -m "ci: update shopkube image to ${{ needs.build.outputs.image-tag }}
-
-          Triggered by: ${{ github.event.head_commit.message }}
-          Commit: ${{ github.sha }}
-          Actor: ${{ github.actor }}"
+          git commit -m "ci: update image to ${{ needs.build.outputs.image-tag }}" || echo "No changes"
 
           git push
 
-          echo "Manifests updated! ArgoCD will sync automatically."
+          echo "ArgoCD will sync automatically 🚀"
